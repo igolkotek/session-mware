@@ -1,3 +1,20 @@
+# express-session-mware
+The reason of this fork is the original express-session makes you to sign cookies.
+So I give this middleware a bit of freedom. Nothing is touched in the original code, but logics added to avoid
+a deprecation warning if secret is absent.
+
+In order the middleware was aware you do not need to sign a cookie, a secret word must be assigned to a type of function.
+```js
+var app = express()
+app.set('trust proxy', 1) // trust first proxy
+app.use(session({
+  secret: function(){},
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: true }
+}))
+```
+
 # express-session
 
 [![NPM Version][npm-version-image]][npm-url]

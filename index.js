@@ -27,7 +27,7 @@ var Cookie = require('./session/cookie')
 var MemoryStore = require('./session/memory')
 var Session = require('./session/session')
 var Store = require('./session/store')
-
+var SECRET_ASSIGNED = true
 // environment
 
 var env = process.env.NODE_ENV;
@@ -64,7 +64,7 @@ var warning = 'Warning: connect.session() MemoryStore is not\n'
 /* istanbul ignore next */
 var defer = typeof setImmediate === 'function'
   ? setImmediate
-  : function(fn){ process.nextTick(fn.bind.apply(fn, arguments)) }
+  : function(fn) { process.nextTick(fn.bind.apply(fn, arguments)) }
 
 /**
  * Setup session store with the given `options`.
@@ -77,7 +77,7 @@ var defer = typeof setImmediate === 'function'
  * @param {Boolean} [options.resave] Resave unmodified sessions back to the store
  * @param {Boolean} [options.rolling] Enable/disable rolling session expiration
  * @param {Boolean} [options.saveUninitialized] Save uninitialized sessions to the store
- * @param {String|Array} [options.secret] Secret for signing session ID
+ * @param {String|Array|Function} [options.secret] Secret for signing session ID
  * @param {Object} [options.store=MemoryStore] Session store
  * @param {String} [options.unset]
  * @return {Function} middleware
@@ -113,6 +113,7 @@ function session(options) {
 
   // get the cookie signing secret
   var secret = opts.secret
+  SECRET_ASSIGNED = typeof secret !== 'function'
 
   if (typeof generateId !== 'function') {
     throw new TypeError('genid option must be a function');
@@ -135,16 +136,18 @@ function session(options) {
   // TODO: switch to "destroy" on next major
   var unsetDestroy = opts.unset === 'destroy'
 
-  if (Array.isArray(secret) && secret.length === 0) {
-    throw new TypeError('secret option array must contain one or more strings');
-  }
+  if (SECRET_ASSIGNED) {
+    if (Array.isArray(secret) && secret.length === 0) {
+      throw new TypeError('secret option array must contain one or more strings');
+    }
 
-  if (secret && !Array.isArray(secret)) {
-    secret = [secret];
-  }
+    if (secret && !Array.isArray(secret)) {
+      secret = [secret];
+    }
 
-  if (!secret) {
-    deprecate('req.secret; provide secret option');
+    if (!secret) {
+      deprecate('req.secret; provide secret option');
+    }
   }
 
   // notify user that this store is not
@@ -155,7 +158,7 @@ function session(options) {
   }
 
   // generates the new session
-  store.generate = function(req){
+  store.generate = function(req) {
     req.sessionID = generateId(req);
     req.session = new Session(req);
     req.session.cookie = new Cookie(cookieOptions);
@@ -196,9 +199,11 @@ function session(options) {
     if (originalPath.indexOf(cookieOptions.path || '/') !== 0) return next();
 
     // ensure a secret is available or bail
-    if (!secret && !req.secret) {
-      next(new Error('secret option required for sessions'));
-      return;
+    if (SECRET_ASSIGNED) {
+      if (!secret && !req.secret) {
+        next(new Error('secret option required for sessions'));
+        return;
+      }
     }
 
     // backwards compatibility for signed cookies
@@ -217,7 +222,7 @@ function session(options) {
     var cookieId = req.sessionID = getcookie(req, name, secrets);
 
     // set-cookie
-    onHeaders(res, function(){
+    onHeaders(res, function() {
       if (!req.session) {
         debug('no session');
         return;
@@ -240,7 +245,8 @@ function session(options) {
       }
 
       // set cookie
-      setcookie(res, name, req.sessionID, secrets[0], req.session.cookie.data);
+      const _secret = SECRET_ASSIGNED ? secrets[0] : secret
+      setcookie(res, name, req.sessionID, _secret, req.session.cookie.data);
     });
 
     // proxy end() to commit the session
@@ -368,7 +374,7 @@ function session(options) {
     }
 
     // inflate the session
-    function inflate (req, sess) {
+    function inflate(req, sess) {
       store.createSession(req, sess)
       originalId = req.sessionID
       originalHash = hash(sess)
@@ -380,8 +386,8 @@ function session(options) {
       wrapmethods(req.session)
     }
 
-    function rewrapmethods (sess, callback) {
-      return function () {
+    function rewrapmethods(sess, callback) {
+      return function() {
         if (req.session !== sess) {
           wrapmethods(req.session)
         }
@@ -482,7 +488,7 @@ function session(options) {
 
     // generate the session object
     debug('fetching %s', req.sessionID);
-    store.get(req.sessionID, function(err, sess){
+    store.get(req.sessionID, function(err, sess) {
       // error handling
       if (err && err.code !== 'ENOENT') {
         debug('error %j', err);
@@ -537,17 +543,21 @@ function getcookie(req, name, secrets) {
 
     raw = cookies[name];
 
-    if (raw) {
-      if (raw.substr(0, 2) === 's:') {
-        val = unsigncookie(raw.slice(2), secrets);
+    if (SECRET_ASSIGNED) {
+      if (raw) {
+        if (raw.substr(0, 2) === 's:') {
+          val = unsigncookie(raw.slice(2), secrets);
 
-        if (val === false) {
-          debug('cookie signature invalid');
-          val = undefined;
+          if (val === false) {
+            debug('cookie signature invalid');
+            val = undefined;
+          }
+        } else {
+          debug('cookie unsigned')
         }
-      } else {
-        debug('cookie unsigned')
       }
+    } else {
+      val = raw
     }
   }
 
@@ -595,7 +605,7 @@ function getcookie(req, name, secrets) {
 
 function hash(sess) {
   // serialize
-  var str = JSON.stringify(sess, function (key, val) {
+  var str = JSON.stringify(sess, function(key, val) {
     // ignore sess.cookie property
     if (this === sess && key === 'cookie') {
       return
@@ -653,7 +663,7 @@ function issecure(req, trustProxy) {
  */
 
 function setcookie(res, name, val, secret, options) {
-  var signed = 's:' + signature.sign(val, secret);
+  var signed = SECRET_ASSIGNED ? 's:' + signature.sign(val, secret) : val;
   var data = cookie.serialize(name, signed, options);
 
   debug('set-cookie %s', data);
